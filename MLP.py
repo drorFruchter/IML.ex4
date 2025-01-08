@@ -2,8 +2,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
+
+import helpers
 from helpers import *
 import pandas as pd
+
+GREEN = '\033[32m'
+BLUE = '\033[34m'
+RESET = '\033[0m'
 
 class EuropeDataset(Dataset):
     def __init__(self, csv_file):
@@ -12,6 +18,11 @@ class EuropeDataset(Dataset):
             csv_file (string): Path to the CSV file with annotations.
         """
         #### YOUR CODE HERE ####
+
+        self.data = pd.read_csv(csv_file)
+        self.features = torch.tensor(self.data[['long', 'lat']].values, dtype=torch.float32)
+        self.labels = torch.tensor(self.data['country'].values, dtype=torch.long)
+
         # Load the data into a tensors
         # The features shape is (n,d)
         # The labels shape is (n)
@@ -19,12 +30,12 @@ class EuropeDataset(Dataset):
         # THe labels dtype is long
 
         #### END OF YOUR CODE ####
-        pass
+
 
     def __len__(self):
         """Returns the total number of samples in the dataset."""
         #### YOUR CODE HERE ####
-        pass
+        return len(self.labels)
 
     def __getitem__(self, idx):
         """
@@ -35,11 +46,11 @@ class EuropeDataset(Dataset):
             dictionary or list corresponding to a feature tensor and it's corresponding label tensor
         """
         #### YOUR CODE HERE ####
-        pass
+        return self.features[idx], self.labels[idx]
     
 
 class MLP(nn.Module):
-    def __init__(self, num_hidden_layers, hidden_dim, output_dim):
+    def __init__(self, num_hidden_layers, hidden_dim, output_dim, batch_norm=False):
         super(MLP, self).__init__()
         """
         Args:
@@ -48,11 +59,46 @@ class MLP(nn.Module):
             output_dim (int): The output dimension, should match the number of classes in the dataset
         """
         #### YOUR CODE HERE ####
-        pass
+        self.layers = nn.ModuleList([nn.Linear(2, hidden_dim)])
+        for _ in range(num_hidden_layers - 1):
+            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+        self.output_layer = nn.Linear(hidden_dim, output_dim)
+        self.activation = nn.ReLU()
+        self.batch_norm = batch_norm
 
     def forward(self, x):
         #### YOUR CODE HERE ####
-       pass
+        for layer in self.layers:
+            x = layer(x)
+            if self.batch_norm:
+                x = nn.BatchNorm1d(x)
+            x = self.activation(x)
+        x = self.output_layer(x)
+        return x
+
+
+def eval(model, criterion, loader):
+    model.eval()
+    with torch.no_grad():
+        #### YOUR CODE HERE ####
+        # perform validation loop and test loop here
+
+        correct = 0
+        total = 0
+        running_loss = 0.0
+
+        for inputs, labels in loader:
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+        model_loss = running_loss / len(loader)
+        model_acc = 100 * correct / total
+
+    return model_loss, model_acc
 
 
 def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, batch_size=256):    
@@ -63,8 +109,8 @@ def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, 
     
     #### YOUR CODE HERE ####
     # initialize your criterion and optimizer here
-    # criterion = 
-    # optimizer = 
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     train_accs = []
     val_accs = []
@@ -72,29 +118,67 @@ def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, 
     train_losses = []
     val_losses = []
     test_losses = []
+    iterations = []
+
 
     for ep in range(epochs):
-        #
+        iterations_per_epoch = 0
         model.train()
         #### YOUR CODE HERE ####
         # perform training epoch here
+        running_loss = 0.0
+        correct_train = 0
+        total_train = 0
 
+        for inputs, labels in trainloader:
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
 
-        model.eval()
-        with torch.no_grad():
-            #### YOUR CODE HERE ####
-            # perform validation loop and test loop here
-            pass
+            running_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            total_train += labels.size(0)
+            correct_train += (predicted == labels).sum().item()
+            iterations_per_epoch += 1
 
-        print('Epoch {:}, Train Acc: {:.3f}, Val Acc: {:.3f}, Test Acc: {:.3f}'.format(ep, train_accs[-1], val_accs[-1], test_accs[-1]))        
+        train_loss = running_loss / len(trainloader)
+        train_acc = 100 * correct_train / total_train
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        iterations.append(iterations_per_epoch)
 
-    model, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses 
+        val_loss, val_acc = eval(model, criterion, valloader)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
 
+        test_loss, test_acc = eval(model, criterion, testloader)
+        test_losses.append(test_loss)
+        test_accs.append(test_acc)
 
+        print(f'Epoch {ep+1} took {GREEN}{iterations_per_epoch}{RESET} iterations, Train Acc: {train_accs[-1]:.3f}, Val Acc: {val_accs[-1]:.3f}, Test Acc: {test_accs[-1]:.3f}')
+
+    return model, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses, iterations
+
+def plot(train_data, val_data, test_data, title):
+    plt.figure()
+    plt.plot(train_data, label='Train', color='red')
+    plt.plot(val_data, label='Val', color='blue')
+    plt.plot(test_data, label='Test', color='green')
+    plt.title(title)
+    plt.legend()
+    plt.show()
+
+lrs = [1., 0.01, 0.001, 0.00001]
+colors = ['red', 'blue', 'green', 'cyan']
+
+batches_sizes = [1, 16, 128, 1024]
+epochs = [1, 10, 50, 50]
 
 if __name__ == '__main__':
     # seed for reproducibility
-    torch.manual_seed(0)    
+    torch.manual_seed(42)
 
     train_dataset = EuropeDataset('train.csv')
     val_dataset = EuropeDataset('validation.csv')
@@ -102,32 +186,64 @@ if __name__ == '__main__':
 
     #### YOUR CODE HERE #####
     # Find the number of classes, e.g.:
-    # output_dim = len(train_dataset.labels.unique()) 
-    model = MLP(6, 16, output_dim)
-    
+    output_dim = len(train_dataset.labels.unique())
 
+    default_model = MLP(6, 16, output_dim)
 
-    model, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses = train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, batch_size=256)
+    _, default_train_accs, default_val_accs, default_test_accs, default_train_losses, default_val_losses, default_test_losses, _ =\
+        train(train_dataset, val_dataset, test_dataset, default_model, lr=0.001, epochs=50, batch_size=256)
 
-    plt.figure()
-    plt.plot(train_losses, label='Train', color='red')
-    plt.plot(val_losses, label='Val', color='blue')
-    plt.plot(test_losses, label='Test', color='green')
-    plt.title('Losses')
-    plt.legend()
-    plt.show()
-
-    plt.figure()
-    plt.plot(train_accs, label='Train', color='red')
-    plt.plot(val_accs, label='Val', color='blue')
-    plt.plot(test_accs, label='Test', color='green')
-    plt.title('Accs.')
-    plt.legend()
-    plt.show()
-
-
+    plot(default_train_losses, default_val_losses, default_test_losses, 'Losses')
+    plot(default_train_accs, default_val_accs, default_test_accs, 'Accuracies')
 
     train_data = pd.read_csv('train.csv')
     val_data = pd.read_csv('validation.csv')
     test_data = pd.read_csv('test.csv')
-    plot_decision_boundaries(model, test_data[['long', 'lat']].values, test_data['country'].values, 'Decision Boundaries', implicit_repr=False)
+    plot_decision_boundaries(default_model, test_data[['long', 'lat']].values, test_data['country'].values,
+                             'Decision Boundaries', implicit_repr=False)
+
+    #Q6.1.2
+
+    #Q1 - Learning rates
+    plt.figure()
+    for i, lr in enumerate(lrs):
+        model = MLP(num_hidden_layers=6, hidden_dim=16, output_dim=output_dim)
+        _, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses, _ = train(train_dataset,
+                                                                                              val_dataset, test_dataset,
+                                                                                              model, lr=lr,
+                                                                                             epochs=50, batch_size=256)
+        plt.plot(val_losses, label=f'lr = {lr}', color=colors[i])
+    plt.title("Validation Loss vs Learning Rate")
+    plt.legend()
+    plt.show()
+
+    #Q2 - Epochs
+    model = MLP(6, 16, output_dim)
+
+    _, _, _, _, train_losses, val_losses, test_losses, _ = train(train_dataset, val_dataset,
+                                                                                      test_dataset, model, lr=0.001,
+                                                                                      epochs=100, batch_size=256)
+
+    plot(train_losses, val_losses, test_losses, '100 Epochs Losses')
+
+    #Q3 - Batch Norm
+    model = MLP(6, 16, output_dim, batch_norm=True)
+
+    _, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses, _ = train(train_dataset, val_dataset,
+                                                                                      test_dataset, model, lr=0.001,
+                                                                                      epochs=50, batch_size=256)
+    plot(train_losses, val_losses, test_losses, 'Batch Norm Losses')
+
+    #Q4 - Batch Size
+    plt.figure()
+    for i in range(len(batches_sizes)):
+        batch, epoch = batches_sizes[i], epochs[i]
+        model = MLP(6, 16, output_dim)
+
+        _, train_accs, val_accs, test_accs, train_losses, val_losses, test_losses, iterations = train(train_dataset, val_dataset,
+                                                                                          test_dataset, model, lr=0.001,
+                                                                                          epochs=epoch, batch_size=batch)
+        plt.plot(val_accs, label=f'Batch Size: {batch}', color=colors[i])
+
+        print(f'speed of model of batch {batch} and epoch {epoch}: {iterations} iterations')
+
